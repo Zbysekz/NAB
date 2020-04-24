@@ -11,12 +11,13 @@ from socket import error as SocketError
 import threading
 from pandaComm.dataExchange import ServerData, CLIENT_CMD, SERVER_CMD
 import numpy
+import time
 
 verbosityLow = 0
 verbosityMedium = 1
 verbosityHigh = 2
 FILE_VERBOSITY = (
-    verbosityMedium
+    verbosityHigh
 )  # change this to change printing verbosity of this file
 
 
@@ -124,7 +125,7 @@ class PandaServer:
                     #self.serverData = ServerData() # clear server data to start with blank structure
 
                     if rxData[0] == CLIENT_CMD.CMD_GET_STATE_DATA:
-                        printLog("State data requested", verbosityHigh)
+                        #printLog("State data requested", verbosityHigh)
                         if self.newStateDataReadyForVis:
                         
                             send_one_message(
@@ -136,7 +137,7 @@ class PandaServer:
                             send_one_message(
                                 conn, PackData(SERVER_CMD.NA, [])
                             )  # we dont have any new data for client
-                            printLog("But no new data available", verbosityHigh)
+                            #printLog("But no new data available", verbosityHigh)
 
                     elif rxData[0] == CLIENT_CMD.CMD_GET_PROXIMAL_DATA:
                         printLog("Proximal data req by client", verbosityMedium)
@@ -275,6 +276,7 @@ class PandaServer:
             printLog("Proceeding one step...")
 
 def getPresynapticCellsForCell(tm, cellID):
+    start_time = time.time()
     segments = tm.connections.segmentsForCell(cellID)
                     
     synapses = []
@@ -288,6 +290,8 @@ def getPresynapticCellsForCell(tm, cellID):
             presynapticCells += [tm.connections.presynapticCellForSynapse(syn)]
     
         res += [presynapticCells]
+
+    printLog("getPresynapticCellsForCell() took %s seconds " % (time.time() - start_time), verbosityHigh)
     return res
 
 class ServerThread(threading.Thread):
