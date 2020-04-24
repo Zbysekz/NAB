@@ -34,6 +34,8 @@ from htm.bindings.algorithms import Predictor
 
 from nab.detectors.base import AnomalyDetector
 
+import faulthandler; faulthandler.enable()
+
 # Fraction outside of the range of values seen so far that will be considered
 # a spatial anomaly regardless of the anomaly likelihood calculation. This
 # accounts for the human labelling bias for spatial values larger than what
@@ -122,6 +124,8 @@ class HtmcoreDetector(AnomalyDetector):
     # internal helper variables:
     self.inputs_ = []
     self.iteration_ = 0
+    self.predictiveCellsSDR_last = None
+    self.firstStep = True
 
     # initialize pandaVis server
     if PANDA_VIS_ENABLED:
@@ -168,7 +172,7 @@ class HtmcoreDetector(AnomalyDetector):
     scalarEncoderParams.resolution = parameters["enc"]["value"]["resolution"]
 
     self.encValue = RDSE( scalarEncoderParams )
-    encodingWidth = (self.encTimestamp.size + self.encValue.size)
+    encodingWidth = (self.encValue.size)
     self.enc_info = Metrics( [encodingWidth], 999999999 )
 
     # Make the HTM.  SpatialPooler & TemporalMemory & associated tools.
@@ -203,7 +207,8 @@ class HtmcoreDetector(AnomalyDetector):
       permanenceDecrement       = tmParams["permanenceDec"],
       predictedSegmentDecrement = 0.0,
       maxSegmentsPerCell        = tmParams["maxSegmentsPerCell"],
-      maxSynapsesPerSegment     = tmParams["maxSynapsesPerSegment"]
+      maxSynapsesPerSegment     = tmParams["maxSynapsesPerSegment"],
+      externalPredictiveInputs=self.encTimestamp.size
     )
     self.tm_info = Metrics( [self.tm.numberOfCells()], 999999999 )
 
@@ -238,7 +243,7 @@ class HtmcoreDetector(AnomalyDetector):
       dateBits        = self.encTimestamp.encode(ts)
       valueBits       = self.encValue.encode(float(val))
       # Concatenate all these encodings into one large encoding for Spatial Pooling.
-      encoding = SDR( self.encTimestamp.size + self.encValue.size ).concatenate([valueBits, dateBits])
+      encoding = valueBits
       self.enc_info.addData( encoding )
 
       # 2. Spatial Pooler
@@ -249,15 +254,29 @@ class HtmcoreDetector(AnomalyDetector):
       self.sp.compute(encoding, True, activeColumns)
       self.sp_info.addData( activeColumns )
 
+      if not self.firstStep:
+          # and calculate anomaly - compare how much of active columns had some predictive cells
+          rawAnomaly = Anomaly.calculateRawAnomaly(activeColumns,
+                                                   self.tm.cellsToColumns(self.predictiveCellsSDR_last))
+      else:
+          rawAnomaly = 0
+          self.firstStep = False
+
       # 3. Temporal Memory
       # Execute Temporal Memory algorithm over active mini-columns.
-      #self.tm.compute(activeColumns, learn=True)
-
       self.tm.activateCells(activeColumns, learn=True)
+
+      # Execute Temporal memory algorithm over the Sensory Layer, with mix of
+      # Location Layer activity and Sensory Layer activity as distal input
+      externalDistalInput = dateBits
+
       # activateDendrites calculates active segments
-      self.tm.activateDendrites(learn=True)
+      self.tm.activateDendrites(learn=True, externalPredictiveInputsActive=externalDistalInput,
+                                externalPredictiveInputsWinners=externalDistalInput)
       # predictive cells are calculated directly from active segments
+
       predictiveCells = self.tm.getPredictiveCells()
+      self.predictiveCellsSDR_last = predictiveCells
 
       self.tm_info.addData( self.tm.getActiveCells().flatten() )
 
@@ -284,7 +303,7 @@ class HtmcoreDetector(AnomalyDetector):
           self.minVal = val
 
       # -temporal (raw)
-      raw = self.tm.anomaly
+      raw = rawAnomaly
       temporalAnomaly = raw
 
       if self.useLikelihood:
@@ -319,8 +338,8 @@ class HtmcoreDetector(AnomalyDetector):
           modelParams["sp"]["columnCount"],
           modelParams["tm"]["cellsPerColumn"],
       )
-      serverData.HTMObjects["HTM1"].layers["Layer1"].proximalInputs = ["Value","TimeOfDay"]
-      serverData.HTMObjects["HTM1"].layers["Layer1"].distalInputs = ["Layer1"]
+      serverData.HTMObjects["HTM1"].layers["Layer1"].proximalInputs = ["Value"]
+      serverData.HTMObjects["HTM1"].layers["Layer1"].distalInputs = ["Layer1","TimeOfDay"]
 
 
   def PandaUpdateData(self, timestamp, value, valueSDR, datetimeSDR, activeColumns, predictiveCells):
