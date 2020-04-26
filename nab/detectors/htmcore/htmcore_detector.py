@@ -31,6 +31,7 @@ from htm.bindings.algorithms import SpatialPooler
 from htm.bindings.algorithms import TemporalMemory
 from htm.algorithms.anomaly_likelihood import AnomalyLikelihood
 from htm.bindings.algorithms import Predictor
+from htm.algorithms.anomaly import Anomaly
 
 from nab.detectors.base import AnomalyDetector
 
@@ -49,7 +50,7 @@ parameters_numenta_comparable = {
         'sparsity': 0.10
       },
     "time": {  # DateTime for timestamps
-        'timeOfDay': (21, 9.49), 
+        'timeOfDay': (21, 3),
         'weekend': 0 #21 TODO try impact of weekend
         }},
   'predictor': {'sdrc_alpha': 0.1},
@@ -114,7 +115,8 @@ class HtmcoreDetector(AnomalyDetector):
     # internal helper variables:
     self.inputs_ = []
     self.iteration_ = 0
-
+    self.predictiveCellsSDR_last = None
+    self.firstStep = True
 
   def getAdditionalHeaders(self):
     """Returns a list of strings."""
@@ -237,6 +239,14 @@ class HtmcoreDetector(AnomalyDetector):
       self.sp.compute(encoding, True, activeColumns)
       self.sp_info.addData( activeColumns )
 
+      if not self.firstStep:
+          # and calculate anomaly - compare how much of active columns had some predictive cells
+          rawAnomaly = Anomaly.calculateRawAnomaly(activeColumns,
+                                                   self.tm.cellsToColumns(self.predictiveCellsSDR_last))
+      else:
+          rawAnomaly = 0
+          self.firstStep = False
+
       # 3. Temporal Memory
       # Execute Temporal Memory algorithm over active mini-columns.
       self.tm.activateCells(activeColumns, learn=True)
@@ -250,7 +260,11 @@ class HtmcoreDetector(AnomalyDetector):
       self.tm.activateDendrites(learn=True, externalPredictiveInputsActive=externalDistalInput,
                                        externalPredictiveInputsWinners=externalDistalInput)
 
-      self.tm_info.addData( self.tm.getActiveCells().flatten() )
+      # predictive cells are calculated directly from active segments
+      predictiveCells = self.tm.getPredictiveCells()
+      self.predictiveCellsSDR_last = predictiveCells
+
+      #self.tm_info.addData( self.tm.getActiveCells().flatten() ) !! can't call!! - SIGSEG
 
       # 4.1 (optional) Predictor #TODO optional
       #TODO optional: also return an error metric on predictions (RMSE, R2,...)
@@ -273,7 +287,7 @@ class HtmcoreDetector(AnomalyDetector):
           self.minVal = val
 
       # -temporal (raw)
-      raw = self.tm.anomaly
+      raw = rawAnomaly
       temporalAnomaly = raw
 
       if self.useLikelihood:

@@ -31,6 +31,7 @@ from htm.bindings.algorithms import SpatialPooler
 from htm.bindings.algorithms import TemporalMemory
 from htm.algorithms.anomaly_likelihood import AnomalyLikelihood
 from htm.bindings.algorithms import Predictor
+from htm.algorithms.anomaly import Anomaly
 
 from nab.detectors.base import AnomalyDetector
 
@@ -45,8 +46,8 @@ SPATIAL_TOLERANCE = 0.05
 PANDA_VIS_ENABLED = True # if we want to run pandaVis tool
 
 if PANDA_VIS_ENABLED:
-    from pandaComm.pandaServer import PandaServer
-    from pandaComm.dataExchange import ServerData, dataHTMObject, dataLayer, dataInput
+    from PandaVis.pandaComm.server import PandaServer
+    from PandaVis.pandaComm.dataExchange import ServerData, dataHTMObject, dataLayer, dataInput
 
     pandaServer = PandaServer()
 
@@ -59,7 +60,7 @@ parameters_numenta_comparable = {
         'sparsity': 0.10
       },
     "time": {  # DateTime for timestamps
-        'timeOfDay': (21, 9.49), 
+        'timeOfDay': (21, 3),
         'weekend': 0 #21 TODO try impact of weekend
         }},
   'predictor': {'sdrc_alpha': 0.1},
@@ -278,9 +279,10 @@ class HtmcoreDetector(AnomalyDetector):
       predictiveCells = self.tm.getPredictiveCells()
       self.predictiveCellsSDR_last = predictiveCells
 
-      self.tm_info.addData( self.tm.getActiveCells().flatten() )
+      #self.tm_info.addData( self.tm.getActiveCells().flatten() )
 
-      self.PandaUpdateData(ts, val, valueBits, dateBits , activeColumns, predictiveCells)
+      if PANDA_VIS_ENABLED:
+        self.PandaUpdateData(ts, val, valueBits, dateBits , activeColumns, predictiveCells)
 
       # 4.1 (optional) Predictor #TODO optional
       #TODO optional: also return an error metric on predictions (RMSE, R2,...)
@@ -339,7 +341,7 @@ class HtmcoreDetector(AnomalyDetector):
           modelParams["tm"]["cellsPerColumn"],
       )
       serverData.HTMObjects["HTM1"].layers["Layer1"].proximalInputs = ["Value"]
-      serverData.HTMObjects["HTM1"].layers["Layer1"].distalInputs = ["Layer1","TimeOfDay"]
+      serverData.HTMObjects["HTM1"].layers["Layer1"].distalInputs = ["TimeOfDay"]
 
 
   def PandaUpdateData(self, timestamp, value, valueSDR, datetimeSDR, activeColumns, predictiveCells):
@@ -392,3 +394,6 @@ detector = HtmcoreDetector(dataSet=dataSet,
 detector.initialize()
 
 detector.run()
+
+#print(detector.handleRecord({'timestamp':datetime.datetime(2014,10,4,10,0), 'value':-20.0}))
+#print(detector.handleRecord({'timestamp':datetime.datetime(2014,10,4,10,0), 'value':-20.0}))
