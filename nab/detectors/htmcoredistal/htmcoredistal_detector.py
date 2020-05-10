@@ -59,12 +59,12 @@ parameters_numenta_comparable = {
         'sparsity': 0.10
       },
     "time": {  # DateTime for timestamps
-        'timeOfDay': (21, 1), # size can be calculated as (a,b) -> size = 24/b*a
+        'timeOfDay': (21, 9.49),
         'weekend': 0 #21 TODO try impact of weekend
         }},
   'predictor': {'sdrc_alpha': 0.1},
   'sp': {
-    'boostStrength': 0.1,
+    'boostStrength': 0.0,
     'columnCount': 2048,
     'localAreaDensity': 40/2048,
     'potentialPct': 0.4,
@@ -88,8 +88,6 @@ parameters_numenta_comparable = {
       'probationaryPct': 0.1,
       'reestimationPeriod': 100}}
 }
-
-
 def get_params(filename):
   """Reads parameters from a json file
 
@@ -148,6 +146,7 @@ class HtmcoredistalDetector(AnomalyDetector):
     if PANDA_VIS_ENABLED:
         pandaServer.Start()
         self.BuildPandaSystem(parameters_numenta_comparable)
+        self.firstStep = True
 
 
   def getAdditionalHeaders(self):
@@ -280,19 +279,15 @@ class HtmcoredistalDetector(AnomalyDetector):
       # the tm.compute() can't be used, because we need to get predictiveCells
       if PANDA_VIS_ENABLED:
 
-        # Execute Temporal memory algorithm over the Sensory Layer, with mix of
-        # Location Layer activity and Sensory Layer activity as distal input
-        externalDistalInput = dateBits
+        if self.firstStep:
+            self.firstStep = False
+            # Execute Temporal memory algorithm over the Sensory Layer, with mix of
+            # Location Layer activity and Sensory Layer activity as distal input
+            externalDistalInput = SDR(self.encTimestamp.size)
 
-        # activateDendrites calculates active segments
-        self.tm.activateDendrites(learn=True, externalPredictiveInputsActive=externalDistalInput,
-                                  externalPredictiveInputsWinners=externalDistalInput)
-        # predictive cells are calculated directly from active segments
-        predictiveCells = self.tm.getPredictiveCells()
-
-        if PANDA_VIS_ENABLED:
-            self.PandaUpdateData(ts, val, valueBits, dateBits, activeColumns, predictiveCells)
-            pandaServer.BlockExecution()
+            # activateDendrites calculates active segments
+            self.tm.activateDendrites(learn=True, externalPredictiveInputsActive=externalDistalInput,
+                                      externalPredictiveInputsWinners=externalDistalInput)
 
         # activates cells in columns by TM algorithm (winners, bursting...)
         self.tm.activateCells(activeColumns, learn=True)
@@ -345,6 +340,19 @@ class HtmcoredistalDetector(AnomalyDetector):
 
 
 
+      # Execute Temporal memory algorithm over the Sensory Layer, with mix of
+      # Location Layer activity and Sensory Layer activity as distal input
+      externalDistalInput = dateBits
+
+      # activateDendrites calculates active segments
+      self.tm.activateDendrites(learn=True, externalPredictiveInputsActive=externalDistalInput,
+                                externalPredictiveInputsWinners=externalDistalInput)
+      # predictive cells are calculated directly from active segments
+      predictiveCells = self.tm.getPredictiveCells()
+
+      if PANDA_VIS_ENABLED:
+          self.PandaUpdateData(ts, val, valueBits, dateBits, activeColumns, predictiveCells)
+          pandaServer.BlockExecution()
 
       return (anomalyScore, raw)
 
