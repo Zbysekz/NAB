@@ -41,7 +41,8 @@ from nab.detectors.base import AnomalyDetector
 # has been seen so far.
 SPATIAL_TOLERANCE = 0.05
 
-PANDA_VIS_ENABLED = False # if we want to run pandaVis tool (repo at https://github.com/htm-community/HTMpandaVis )
+PANDA_VIS_ENABLED = True # if we want to run pandaVis tool (repo at https://github.com/htm-community/HTMpandaVis )
+import faulthandler; faulthandler.enable()
 
 if PANDA_VIS_ENABLED:
     from PandaVis.pandaComm.server import PandaServer
@@ -58,12 +59,12 @@ parameters_numenta_comparable = {
         'sparsity': 0.10
       },
     "time": {  # DateTime for timestamps
-        'timeOfDay': (21, 9.49), 
+        'timeOfDay': (21, 1), # size can be calculated as (a,b) -> size = 24/b*a
         'weekend': 0 #21 TODO try impact of weekend
         }},
   'predictor': {'sdrc_alpha': 0.1},
   'sp': {
-    'boostStrength': 0.0,
+    'boostStrength': 0.1,
     'columnCount': 2048,
     'localAreaDensity': 40/2048,
     'potentialPct': 0.4,
@@ -103,14 +104,14 @@ def get_params(filename):
     return params
 
 
-class HtmcoreDetector(AnomalyDetector):
+class HtmcoredistalDetector(AnomalyDetector):
   """
   This detector uses an HTM based anomaly detection technique.
   """
 
   def __init__(self, *args, **kwargs):
 
-    super(HtmcoreDetector, self).__init__(*args, **kwargs)
+    super(HtmcoredistalDetector, self).__init__(*args, **kwargs)
 
     ## API for controlling settings of htm.core HTM detector:
 
@@ -188,9 +189,10 @@ class HtmcoreDetector(AnomalyDetector):
     scalarEncoderParams.size       = parameters["enc"]["value"]["size"]
     scalarEncoderParams.sparsity   = parameters["enc"]["value"]["sparsity"]
     scalarEncoderParams.resolution = parameters["enc"]["value"]["resolution"]
+    scalarEncoderParams.seed = 1
 
     self.encValue = RDSE( scalarEncoderParams )
-    encodingWidth = (self.encTimestamp.size + self.encValue.size)
+    encodingWidth = self.encValue.size
     self.enc_info = Metrics( [encodingWidth], 999999999 )
 
     # Make the HTM.  SpatialPooler & TemporalMemory & associated tools.
@@ -225,7 +227,8 @@ class HtmcoreDetector(AnomalyDetector):
       permanenceDecrement       = tmParams["permanenceDec"],
       predictedSegmentDecrement = 0.0,
       maxSegmentsPerCell        = tmParams["maxSegmentsPerCell"],
-      maxSynapsesPerSegment     = tmParams["maxSynapsesPerSegment"]
+      maxSynapsesPerSegment     = tmParams["maxSynapsesPerSegment"],
+      externalPredictiveInputs  = self.encTimestamp.size
     )
     self.tm_info = Metrics( [self.tm.numberOfCells()], 999999999 )
 
@@ -259,8 +262,8 @@ class HtmcoreDetector(AnomalyDetector):
       # Call the encoders to create bit representations for each value.  These are SDR objects.
       dateBits        = self.encTimestamp.encode(ts)
       valueBits       = self.encValue.encode(float(val))
-      # Concatenate all these encodings into one large encoding for Spatial Pooling.
-      encoding = SDR( self.encTimestamp.size + self.encValue.size ).concatenate([valueBits, dateBits])
+      #
+      encoding = valueBits
       self.enc_info.addData( encoding )
 
       # 2. Spatial Pooler
@@ -274,23 +277,32 @@ class HtmcoreDetector(AnomalyDetector):
       # 3. Temporal Memory
       # Execute Temporal Memory algorithm over active mini-columns.
 
-      # the tm.compute() execute activateDendrites() - calculateAnomaly()/getPredictiveCells() - activateCells()
-      # but to get insight into system with visTool, we need to have different execution order
-      # Note: pandaVis retrieves synapses etc. by requesting data from sp/tm python objects, so data validity is crucial
+      # the tm.compute() can't be used, because we need to get predictiveCells
       if PANDA_VIS_ENABLED:
-        # activates cells in columns by TM algorithm (winners, bursting...)
-        self.tm.activateCells(activeColumns, learn=True)
+
+        # Execute Temporal memory algorithm over the Sensory Layer, with mix of
+        # Location Layer activity and Sensory Layer activity as distal input
+        externalDistalInput = dateBits
+
         # activateDendrites calculates active segments
-        self.tm.activateDendrites(learn=True)
+        self.tm.activateDendrites(learn=True, externalPredictiveInputsActive=externalDistalInput,
+                                  externalPredictiveInputsWinners=externalDistalInput)
         # predictive cells are calculated directly from active segments
         predictiveCells = self.tm.getPredictiveCells()
+
+        if PANDA_VIS_ENABLED:
+            self.PandaUpdateData(ts, val, valueBits, dateBits, activeColumns, predictiveCells)
+            pandaServer.BlockExecution()
+
+        # activates cells in columns by TM algorithm (winners, bursting...)
+        self.tm.activateCells(activeColumns, learn=True)
+
       else:
         self.tm.compute(activeColumns, learn=True)
 
       self.tm_info.addData( self.tm.getActiveCells().flatten() )
 
-      if PANDA_VIS_ENABLED:
-        self.PandaUpdateData(ts, val, valueBits, dateBits , activeColumns, predictiveCells)
+
 
       # 4.1 (optional) Predictor #TODO optional
       #TODO optional: also return an error metric on predictions (RMSE, R2,...)
@@ -331,8 +343,7 @@ class HtmcoreDetector(AnomalyDetector):
           # print(self.tm_info)
           pass
 
-      if PANDA_VIS_ENABLED:
-          pandaServer.BlockExecution()
+
 
 
       return (anomalyScore, raw)
@@ -348,8 +359,8 @@ class HtmcoreDetector(AnomalyDetector):
           modelParams["sp"]["columnCount"],
           modelParams["tm"]["cellsPerColumn"],
       )
-      serverData.HTMObjects["HTM1"].layers["Layer1"].proximalInputs = ["Value","TimeOfDay"]
-      serverData.HTMObjects["HTM1"].layers["Layer1"].distalInputs = ["Layer1"]
+      serverData.HTMObjects["HTM1"].layers["Layer1"].proximalInputs = ["Value"]
+      serverData.HTMObjects["HTM1"].layers["Layer1"].distalInputs = ["TimeOfDay"]
 
 
   def PandaUpdateData(self, timestamp, value, valueSDR, datetimeSDR, activeColumns, predictiveCells):
@@ -399,7 +410,7 @@ if PANDA_VIS_ENABLED:
 
   dataSet = corpus.dataFiles["artificialWithAnomaly/art_daily_flatmiddle.csv"]
 
-  detector = HtmcoreDetector(dataSet=dataSet,
+  detector = HtmcoredistalDetector(dataSet=dataSet,
                   probationaryPercent=0.15)
 
   detector.initialize()

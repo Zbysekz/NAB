@@ -229,6 +229,8 @@ if __name__ == "__main__":
     from nab.detectors.earthgecko_skyline.earthgecko_skyline_detector import EarthgeckoSkylineDetector
   if "htmcore" in args.detectors:
     from nab.detectors.htmcore.htmcore_detector import HtmcoreDetector
+  if "htmcoredistal" in args.detectors:
+    from nab.detectors.htmcoredistal.htmcoredistal_detector import HtmcoredistalDetector
 
   # Special hacks for detectors requiring Python 2:
   # TODO the imports are failing, remove? Py2 detectors have special treatment in `getDetectorClassConstructors()` above
